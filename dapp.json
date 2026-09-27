@@ -358,6 +358,34 @@
       "allowConsoleErrors": true
     },
     {
+      "id": "duel.handoff",
+      "name": "Pass-and-play Duel shows the pass-the-device card",
+      "path": "/?scene=duelhandoff",
+      "expectSelector": "#duel-panel",
+      "expectText": "Pass the device",
+      "visual": true,
+      "impact": [
+        "public/app.js",
+        "public/index.html",
+        "public/state.js",
+        "tests/game.test.mjs",
+        "dapp.json"
+      ]
+    },
+    {
+      "id": "duel.result",
+      "name": "Pass-and-play Duel shows both miss counts and the winner",
+      "path": "/?scene=duelresult",
+      "expectSelector": "#duel-panel-scores",
+      "expectText": "Sheep counter 1 wins",
+      "visual": true,
+      "impact": [
+        "public/app.js",
+        "public/index.html",
+        "dapp.json"
+      ]
+    },
+    {
       "id": "round.resume",
       "name": "A saved mid-round board restores on return",
       "path": "/?resume=1&snapshot=%7B%22midCountdown%22%3A%7B%22round%22%3A5%2C%22seed%22%3A387276923%2C%22counted%22%3A%5B0%2C1%2C2%5D%2C%22phase%22%3A%22counting%22%7D%7D",
@@ -372,6 +400,23 @@
         "server.js",
         "dapp.json"
       ]
+    },
+    {
+      "name": "Duel turn clock shows on a live duel board",
+      "path": "/?round=1&duel=1",
+      "expectSelector": "#duel-turn-clock:not([hidden])",
+      "expectText": "Pass and play"
+    },
+    {
+      "name": "Duel toggle appears on the briefing card",
+      "path": "/?scene=intro",
+      "expectSelector": "#duel-toggle",
+      "expectText": "Pass-and-play Duel"
+    },
+    {
+      "name": "Duel board renders the DOM fallback with the shared flock",
+      "path": "/?round=2&duel=1&renderer=dom",
+      "expectSelector": ".sheep-fallback-grid .sheep-card:nth-child(2)"
     },
     {
       "name": "Resumed board restores on the no-WebGL fallback too",
