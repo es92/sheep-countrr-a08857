@@ -25,6 +25,7 @@ import {
 } from './rounds.js';
 import { playTapChime, playBaa, playCelebration, setSoundEnabled } from './sound.js';
 import { sortScoreRows } from './leaderboard.js';
+import { sheepName } from './layout.js';
 import { bestRoundsCsv, weeklyHistoryCsv } from './export.js';
 
 // Pass-and-play Duel: shared controller state, exported for the unit suite.
@@ -58,6 +59,10 @@ const soundParam = params.get('sound');
 // The grown-ups fixture can force the Night Meadow toggle the same way
 // (?night=1 shows the night scene without touching localStorage).
 const nightParam = params.get('night');
+// The grown-ups fixture can force the Name labels toggle the same way
+// (?names=1 floats playful name labels without touching localStorage).
+const hasNamesParam = params.get('names') !== null;
+const namesParam = params.get('names') === '1';
 // Optional landing tab for the leaderboard fixture (?scene=leaderboard&tab=weekly).
 const tabParam = params.get('tab');
 // The two public share surfaces. Their URLs are plain paths, so detection is
@@ -114,6 +119,12 @@ function applyTheme(state) {
   renderer?.setNight?.(!!state.nightOn);
 }
 
+// Mirrors the purely cosmetic name-label flag into whichever renderer is
+// mounted. Counting, the store and the server never see it change.
+function applyNames(state) {
+  renderer?.setNames?.(!!state.namesOn);
+}
+
 const els = {
   countDisplay: document.getElementById('count-display'),
   countWord: document.getElementById('count-word'),
@@ -155,6 +166,7 @@ const els = {
   grownupsClose: document.getElementById('grownups-close'),
   soundToggle: document.getElementById('sound-toggle'),
   nightToggle: document.getElementById('night-toggle'),
+  namesToggle: document.getElementById('names-toggle'),
   startOverBtn: document.getElementById('start-over-btn'),
   roundValue: document.getElementById('round-value'),
   bestValue: document.getElementById('best-value'),
@@ -392,6 +404,7 @@ async function boot() {
     await bootPublicView();
     return;
   }
+  if (hasNamesParam) store.state = { ...store.state, namesOn: namesParam };
   if (staticMode) {
     store.state = buildStaticState();
   } else if (resumeParam) {
@@ -1127,7 +1140,9 @@ function updateChrome(state) {
   setExportStatus('');
   els.soundToggle.checked = !!state.soundOn;
   els.nightToggle.checked = !!state.nightOn;
+  els.namesToggle.checked = !!state.namesOn;
   applyTheme(state);
+  applyNames(state);
 
   syncPanels(state);
 }
@@ -1195,8 +1210,15 @@ function renderA11yList(state) {
     // mirror says so instead of offering a button that would silently do
     // nothing.
     btn.disabled = introOpen || countdownOpen;
-    btn.textContent = state.counted.includes(i)
-      ? `Sheep ${i + 1}, counted` : `Sheep ${i + 1}, not counted yet`;
+    // With Name labels on, the mirror uses the same playful name the two
+    // renderers draw, so a screen reader calls the sheep what the player
+    // sees: "Woolly is grazing" / "Woolly, counted as number 3".
+    btn.textContent = state.namesOn
+      ? (state.counted.includes(i)
+        ? `${sheepName(state.seed, i)}, counted as number ${state.counted.indexOf(i) + 1}`
+        : `${sheepName(state.seed, i)} is grazing`)
+      : (state.counted.includes(i)
+        ? `Sheep ${i + 1}, counted` : `Sheep ${i + 1}, not counted yet`);
   });
   // The countdown mirrors into the a11y channel too, appended after the
   // clock line, so when the round goes live the clock is the last thing
@@ -1300,6 +1322,14 @@ els.soundToggle.addEventListener('change', (e) => {
 els.nightToggle.addEventListener('change', (e) => {
   if (staticMode) return;
   store.setNightOn(e.target.checked);
+});
+
+els.namesToggle.addEventListener('change', (e) => {
+  if (staticMode) return;
+  store.setNamesOn(e.target.checked);
+  // The mirror lives outside updateChrome's renderer path, so it needs
+  // its own render to switch between "Sheep 3" and "Woolly is grazing".
+  renderA11yList(store.state);
 });
 
 // ---- Grown-ups CSV export ----
