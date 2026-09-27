@@ -17,6 +17,8 @@ import {
   normalizeSpeedRound,
   roundSeed,
   sheepForRound,
+  WOLF_BONUS,
+  wolfIndexForRound,
 } from './rounds.js';
 
 const STORAGE_PREFIX = 'sheep-countrr:';
@@ -32,6 +34,7 @@ export const RUN_OVER = 'runOver';
 // the same line the player saw.
 export const ENDED_DOUBLE_TAP = 'doubleTap';
 export const ENDED_MISSED = 'missed';
+export const ENDED_WOLF = 'wolf';
 export const ENDED_TIME_UP = 'timeUp';
 
 // One best round per difficulty, kept in a map so a best on Easy can never
@@ -65,6 +68,10 @@ export function createDefaultState() {
     counted: [],
     phase: COUNTING,
     endedBy: null,
+    wolfIndex: null,
+    safeStreak: 0,
+    bestSafeStreak: 0,
+    bonusCounted: 0,
     bestRounds: { easy: 1, normal: 1, hard: 1, expert: 1 },
     totalCounted: 0,
     communityTotal: 0,
@@ -98,6 +105,7 @@ export class StateStore {
     this.deterministic = !!deterministic;
     this.state = createDefaultState();
     this.unsyncedTaps = 0;
+    this.unsyncedBonus = 0;
     this._syncTimer = null;
     // One finished run is recorded at most once per run; a fresh run
     // re-arms the guard (see startRound).
@@ -152,6 +160,8 @@ export class StateStore {
         ...this.state,
         round: normalizeRound(saved.round),
         bestRounds: normalizeBestRounds(saved.bestRounds, saved.bestRound || saved.round),
+        bestSafeStreak: Math.max(0, Number(saved.bestSafeStreak) || 0),
+        bonusCounted: Math.max(0, Number(saved.bonusCounted) || 0),
         totalCounted: Math.max(0, Number(saved.totalCounted) || 0),
         soundOn: !!saved.soundOn,
         nightOn: !!saved.nightOn,
@@ -189,6 +199,8 @@ export class StateStore {
         round: this.state.round,
         difficulty: this.state.difficulty,
         bestRounds: this.state.bestRounds,
+        bestSafeStreak: this.state.bestSafeStreak,
+        bonusCounted: this.state.bonusCounted,
         totalCounted: this.state.totalCounted,
         soundOn: this.state.soundOn,
         nightOn: this.state.nightOn,
@@ -218,6 +230,8 @@ export class StateStore {
         ...this.state,
         round: resuming ? this.state.round : normalizeRound(data.round),
         bestRounds: normalizeBestRounds(data.bestRounds, data.bestRound),
+        bestSafeStreak: Math.max(0, Number(data.bestSafeStreak) || 0),
+        bonusCounted: Math.max(0, Number(data.bonusCounted) || 0),
         totalCounted: Math.max(0, Number(data.totalCounted) || 0),
         communityTotal: Math.max(0, Number(data.communityTotal) || 0),
         soundOn: !!data.soundOn,
@@ -248,6 +262,8 @@ export class StateStore {
     clearTimeout(this._syncTimer);
     const taps = this.unsyncedTaps;
     this.unsyncedTaps = 0;
+    const bonus = this.unsyncedBonus;
+    this.unsyncedBonus = 0;
     try {
       await fetch('/api/state', {
         method: 'POST',
@@ -257,7 +273,9 @@ export class StateStore {
           round: this.state.round,
           difficulty: this.state.difficulty,
           bestRound: this.bestRound,
+          bestSafeStreak: this.state.bestSafeStreak,
           newTaps: taps,
+          newBonus: bonus,
           soundOn: this.state.soundOn,
           nightOn: this.state.nightOn,
           calmOn: this.state.calmOn,
@@ -269,17 +287,21 @@ export class StateStore {
   }
 
   // Start (or restart) a round: fresh flock, nothing counted, run alive.
+  // The wolf draw happens here, from the round's seed, so a round that is
+  // never resumed mid-count always re-derives exactly what was hiding.
   startRound(round, { silent, keepBoard } = {}) {
     const next = normalizeRound(round);
     const bestRound = Math.max(this.state.bestRounds[this.state.difficulty] || 1, next);
+    // keepBoard: a server sync just came back and the locally restored
+    // board is newer than anything the server has; keep its flock and
+    // its exact seed, not a freshly scattered one.
+    const sheepCount = keepBoard ? this.state.sheepCount : sheepForRound(next, this.state.difficulty);
+    const seed = keepBoard ? this.state.seed : this.seedFor(next);
     this.state = {
       ...this.state,
       round: next,
-      // keepBoard: a server sync just came back and the locally restored
-      // board is newer than anything the server has; keep its flock and
-      // its exact seed, not a freshly scattered one.
-      sheepCount: keepBoard ? this.state.sheepCount : sheepForRound(next, this.state.difficulty),
-      seed: keepBoard ? this.state.seed : this.seedFor(next),
+      sheepCount,
+      seed,
       // keepBoard: a server sync just came back and the locally restored
       // board is newer than anything the server has; keep its counted
       // list, its clock and its Speed Round countdown exactly as
@@ -293,6 +315,10 @@ export class StateStore {
       roundElapsed: keepBoard ? this.state.roundElapsed : 0,
       phase: COUNTING,
       endedBy: null,
+      wolfIndex: keepBoard ? this.state.wolfIndex : wolfIndexForRound(next, seed, sheepCount),
+      // A restart to round 1 is a new run, so the current streak resets.
+      // bestSafeStreak survives, like bestRounds.
+      safeStreak: next === 1 ? 0 : this.state.safeStreak,
       // Speed Round is a run-level mode set on the briefing card: every
       // round of the run plays the same flock under its own fresh 30
       // second clock. The clock state is reset with the round so a
@@ -387,14 +413,19 @@ export class StateStore {
       this.state = { ...this.state, difficulty, speedOn: !!snapshot.speedOn };
       return this.startRound(round, { silent });
     }
+    const seed = Number.isFinite(Number(snapshot.seed)) && Number(snapshot.seed) >= 0
+      ? Number(snapshot.seed)
+      : this.seedFor(round);
     this.state = {
       ...this.state,
       round,
       difficulty,
       sheepCount,
-      seed: Number.isFinite(Number(snapshot.seed)) && Number(snapshot.seed) >= 0
-        ? Number(snapshot.seed)
-        : this.seedFor(round),
+      seed,
+      // Re-derived from the same round/seed/sheepCount, exactly like
+      // startRound: the wolf draw is a pure function of these, so a
+      // resumed board always shows the same animal that was hiding.
+      wolfIndex: wolfIndexForRound(round, seed, sheepCount),
       count: uniqueCounted.length,
       counted: uniqueCounted,
       countedAt,
@@ -527,6 +558,7 @@ export class StateStore {
   // A tap on a sheep. Returns what it did:
   //   { outcome: 'counted', number }  a new sheep, numbered in tap order
   //   { outcome: 'doubleTap' }        already counted, so the run ends
+  //   { outcome: 'wolfTap' }          the wolf: the run ends immediately
   //   { outcome: 'ignored' }          the run is not accepting taps
   tapSheep(index) {
     if (this.state.phase !== COUNTING) return { outcome: 'ignored' };
@@ -536,6 +568,12 @@ export class StateStore {
     if (this.state.counted.includes(index)) {
       this.endRun(ENDED_DOUBLE_TAP);
       return { outcome: 'doubleTap' };
+    }
+    if (this.state.wolfIndex != null && index === this.state.wolfIndex) {
+      // The wolf tap counts nothing anywhere: no tap, no sheep, no bonus.
+      // The run just ends, like any other run-ending mistake.
+      this.endRun(ENDED_WOLF);
+      return { outcome: 'wolfTap' };
     }
     const counted = [...this.state.counted, index];
     this.unsyncedTaps += 1;
@@ -559,7 +597,10 @@ export class StateStore {
   }
 
   isComplete() {
-    return this.state.count >= this.state.sheepCount;
+    // A round that hides a wolf auto-passes once every real sheep is
+    // counted; the impostor is the one animal left uncounted.
+    const wolves = this.state.wolfIndex != null ? 1 : 0;
+    return this.state.count >= this.state.sheepCount - wolves;
   }
 
   // The player says that is all of them. Right count passes the round;
@@ -567,7 +608,22 @@ export class StateStore {
   submitCount() {
     if (this.state.phase !== COUNTING) return { outcome: 'ignored' };
     if (this.isComplete()) {
-      this.state = { ...this.state, phase: ROUND_PASSED };
+      let { safeStreak, bestSafeStreak } = this.state;
+      if (this.state.wolfIndex != null) {
+        // Dodged: the streak grows, the best streak is kept forever, and
+        // two bonus sheep join the lifetime count.
+        safeStreak += 1;
+        bestSafeStreak = Math.max(bestSafeStreak, safeStreak);
+        this.unsyncedBonus += WOLF_BONUS;
+      }
+      this.state = {
+        ...this.state,
+        phase: ROUND_PASSED,
+        safeStreak,
+        bestSafeStreak,
+        bonusCounted: this.state.bonusCounted + (this.state.wolfIndex != null ? WOLF_BONUS : 0),
+        totalCounted: this.state.totalCounted + (this.state.wolfIndex != null ? WOLF_BONUS : 0),
+      };
       this.saveLocal();
       // A passed round is over; resuming into it would show a board with
       // nothing left to tap. The next visit starts the round fresh,
