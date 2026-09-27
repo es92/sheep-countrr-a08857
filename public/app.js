@@ -10,6 +10,7 @@ import {
 import {
   DEFAULT_DIFFICULTY,
   SPEED_ROUND_SECONDS,
+  normalizeCalm,
   normalizeDifficulty,
   normalizeRound,
   normalizeSpeedRound,
@@ -21,6 +22,7 @@ import {
   sheepPhrase,
   speedRoundClock,
   successMessage,
+  roundBadgeText,
   weeklyScoreLabel,
 } from './rounds.js';
 import { playTapChime, playBaa, playCelebration, setSoundEnabled } from './sound.js';
@@ -59,6 +61,9 @@ const soundParam = params.get('sound');
 // The grown-ups fixture can force the Night Meadow toggle the same way
 // (?night=1 shows the night scene without touching localStorage).
 const nightParam = params.get('night');
+// ?calm=1 boots straight into Calm mode for the fixture/deep-link run;
+// like night and sound it is never persisted from a deep link.
+const calmParam = params.get('calm');
 // The grown-ups fixture can force the Name labels toggle the same way
 // (?names=1 floats playful name labels without touching localStorage).
 const hasNamesParam = params.get('names') !== null;
@@ -116,7 +121,9 @@ const COUNTDOWN_STEP_MS = 1000;
 // the page changes color.
 function applyTheme(state) {
   document.body.classList.toggle('theme-night', !!state.nightOn);
+  document.body.classList.toggle('theme-calm', !!state.calmOn);
   renderer?.setNight?.(!!state.nightOn);
+  renderer?.setCalm?.(!!state.calmOn);
 }
 
 // Mirrors the purely cosmetic name-label flag into whichever renderer is
@@ -166,6 +173,7 @@ const els = {
   grownupsClose: document.getElementById('grownups-close'),
   soundToggle: document.getElementById('sound-toggle'),
   nightToggle: document.getElementById('night-toggle'),
+  calmToggle: document.getElementById('calm-toggle'),
   namesToggle: document.getElementById('names-toggle'),
   startOverBtn: document.getElementById('start-over-btn'),
   roundValue: document.getElementById('round-value'),
@@ -177,6 +185,7 @@ const els = {
   difficultyValue: document.getElementById('difficulty-value'),
   difficultyPicker: document.getElementById('difficulty-picker'),
   a11yList: document.getElementById('a11y-sheep-list'),
+  a11yRoundProgress: document.getElementById('a11y-round-progress'),
   leaderboardBtn: document.getElementById('leaderboard-btn'),
   countBadge: document.getElementById('count-badge'),
   leaderboard: document.getElementById('leaderboard'),
@@ -342,6 +351,7 @@ function buildStaticState() {
       communityTotal: 39,
       soundOn: soundParam === null || soundParam === '1',
       nightOn: nightParam === '1',
+      calmOn: calmParam === '1',
     });
   }
   if (sceneParam === 'duelhandoff') {
@@ -419,6 +429,7 @@ async function boot() {
     // difficulty= picks the curve; it stays ephemeral like the round itself.
     if (hasDifficultyParam) store.state = { ...store.state, difficulty: difficultyParam };
     if (hasSpeedParam) store.state = { ...store.state, speedOn: speedParam };
+    if (calmParam !== null) store.state = { ...store.state, calmOn: normalizeCalm(calmParam === '1') };
     if (hasDuelParam && duelParam) {
       store.state = { ...store.state, duel: true };
     }
@@ -937,11 +948,15 @@ function syncDuelToggle(state) {
   els.duelToggle.checked = !!state.duel;
 }
 
-// The round badge names the mode while a Speed Round is live, so the
-// result reads differently from a normal round in screenshots too.
+// The round badge names the round and how far the ladder goes, and keeps
+// the Speed Round prefix while that mode is live, so the result reads
+// differently from a normal round in screenshots too. The renderers never
+// touch it: it sits above the canvas and the DOM grid, so both frame the
+// flock exactly as before.
 function syncRoundBadge(state) {
-  els.roundBadge.textContent = state.speedOn && state.phase !== RUN_OVER
-    ? `Speed round ${state.round}` : `Round ${state.round}`;
+  const badge = roundBadgeText(state.round, state.speedOn && state.phase !== RUN_OVER);
+  els.roundBadge.textContent = badge;
+  els.a11yRoundProgress.textContent = `${badge}.`;
 }
 
 function showRoundIntro(state) {
@@ -1140,6 +1155,7 @@ function updateChrome(state) {
   setExportStatus('');
   els.soundToggle.checked = !!state.soundOn;
   els.nightToggle.checked = !!state.nightOn;
+  els.calmToggle.checked = !!state.calmOn;
   els.namesToggle.checked = !!state.namesOn;
   applyTheme(state);
   applyNames(state);
@@ -1307,6 +1323,7 @@ function openGrownups(state) {
   els.communityValue.textContent = String(state.communityTotal);
   els.soundToggle.checked = !!state.soundOn;
   els.nightToggle.checked = !!state.nightOn;
+  els.calmToggle.checked = !!state.calmOn;
   els.grownupsPanel.hidden = false;
 }
 function closeGrownups() {
@@ -1322,6 +1339,11 @@ els.soundToggle.addEventListener('change', (e) => {
 els.nightToggle.addEventListener('change', (e) => {
   if (staticMode) return;
   store.setNightOn(e.target.checked);
+});
+
+els.calmToggle.addEventListener('change', (e) => {
+  if (staticMode) return;
+  store.setCalmOn(e.target.checked);
 });
 
 els.namesToggle.addEventListener('change', (e) => {

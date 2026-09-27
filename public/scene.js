@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { layoutPositions, NUMBER_COLORS, sheepName } from './layout.js';
 import { wanderOffset } from './movement.js';
-import { MAX_SHEEP, motionForRound, roamRadius } from './rounds.js';
+import { MAX_SHEEP, calmMotion, motionForRound, roamRadius } from './rounds.js';
 
 const COLORS = {
   wool: '#f4eadb',
@@ -31,6 +31,18 @@ const COLORS = {
   leaf: '#586e6f',
   leafLight: '#728786',
   fog: '#a1afb8',
+};
+
+// Calm mode: the scenery takes the same soft pastel wash the CSS sky
+// above the canvas uses (see body.theme-calm in index.html). Sheep,
+// flowers and UI colors stay as they are, so the counted ribbons and
+// number plates keep their exact contrast.
+const CALM_COLORS = {
+  ground: '#8fbf8a',
+  hillA: '#8aa89f',
+  hillB: '#75918f',
+  hillC: '#64807f',
+  fog: '#b3c2c8',
 };
 
 // Night Meadow: only the scenery (ground, hills, fog) shifts to its dark
@@ -584,6 +596,7 @@ function detectTier() {
 export function createSceneRenderer({ container, onTap, reducedMotion, onFatal, getOverlayRect, getBottomOverlayRect }) {
   let tier = detectTier();
   let night = false;
+  let calm = false;
 
   const canvas = document.createElement('canvas');
   canvas.className = 'sheep-canvas';
@@ -647,12 +660,21 @@ export function createSceneRenderer({ container, onTap, reducedMotion, onFatal, 
   // sky behind the transparent canvas is CSS on the container; the sheep,
   // trees and flowers keep their colors so they still read as daytime
   // objects under a dimmer meadow.
-  function applyNight(on) {
-    night = !!on;
-    const c = night ? NIGHT_COLORS : COLORS;
+  function applyPalette() {
+    const c = night ? NIGHT_COLORS : (calm ? CALM_COLORS : COLORS);
     ground.material.color.set(c.ground);
     hillMeshes.forEach(([m, key]) => m.material.color.set(c[key]));
     scene.fog.color.set(c.fog);
+  }
+
+  function applyNight(on) {
+    night = !!on;
+    applyPalette();
+  }
+
+  function applyCalm(on) {
+    calm = !!on;
+    applyPalette();
   }
 
   // A few round toy trees along the back.
@@ -754,7 +776,9 @@ export function createSceneRenderer({ container, onTap, reducedMotion, onFatal, 
 
   let lastState = null;
   // How this round's flock moves. Round 1 is perfectly still; later
-  // rounds are faster, bouncier and eventually jittery.
+  // rounds are faster, bouncier and eventually jittery. Calm mode keeps
+  // the same paths but slides the motion clock down, so the flock reads
+  // as slow and quiet without changing what the round asks for.
   let motion = motionForRound(1, lastState && lastState.difficulty);
   let isPortrait = true;
 
@@ -771,7 +795,7 @@ export function createSceneRenderer({ container, onTap, reducedMotion, onFatal, 
   function buildFlock(state) {
     lastState = state;
     namesOn = !!state.namesOn;
-    motion = motionForRound(state.round, state.difficulty);
+    motion = state.calmOn ? calmMotion(state.round, state.difficulty) : motionForRound(state.round, state.difficulty);
     sheep.forEach((s) => { s.ribbonMat.dispose(); s.numberSprite.material.dispose(); });
     scene.remove(sheepGroup);
     sheepGroup = new THREE.Group();
@@ -1251,6 +1275,7 @@ export function createSceneRenderer({ container, onTap, reducedMotion, onFatal, 
     setState(state) {
       buildFlock(state);
       applyNight(!!state.nightOn);
+      applyCalm(!!state.calmOn);
     },
     countSheep(index, number) {
       markCounted(index, number, true);
@@ -1280,6 +1305,9 @@ export function createSceneRenderer({ container, onTap, reducedMotion, onFatal, 
     },
     setNight(on) {
       applyNight(on);
+    },
+    setCalm(on) {
+      applyCalm(on);
     },
     setNames(on) {
       namesOn = !!on;
