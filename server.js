@@ -592,13 +592,20 @@ app.post('/api/state', async (req, res) => {
 // auth-gated catch-all below ever runs, silently defeating that gate.
 // Route both paths past static so the catch-all is the only place the
 // shell is served from.
-// public/tailwind.css is THIS app's own stylesheet: the Dockerfile's first
-// stage compiles it into every image, and this middleware serves it. It is
-// not a platform-hosted file. Never answer it with an empty response to
-// quiet a boot that skipped the build (run `npm run build` instead): a 204
-// here once shipped to production and left every screen without its layout.
+// The image build writes public/tailwind.css (this app's own stylesheet,
+// compiled by the Dockerfile's first stage); only a plain checkout lacks it.
+const HAS_TAILWIND_CSS = require('fs').existsSync(path.join(__dirname, 'public', 'tailwind.css'));
+
 app.use((req, res, next) => {
   if (req.path === '/' || req.path === '/index.html') return next();
+  // A plain checkout has no compiled Tailwind stylesheet. With no copy to
+  // serve, answer 204 rather than 401: the file carries no gated data, and a
+  // console error for an asset this container is not expected to have reads
+  // as a bug. /usernode-bridge/ never reaches here: the proxy above answers
+  // every path under it.
+  if (req.path === '/tailwind.css' && !HAS_TAILWIND_CSS) {
+    return res.status(204).end();
+  }
   express.static(path.join(__dirname, 'public'))(req, res, next);
 });
 

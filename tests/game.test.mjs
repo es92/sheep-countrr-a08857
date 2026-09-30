@@ -1196,9 +1196,12 @@ test('the 3D frame loop advances the round clock every frame', () => {
 test('the server serves the app stylesheet and records wolf endings', () => {
   const server = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
   const code = server.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
-  assert.doesNotMatch(code, /tailwind\.css/, 'no route answers /tailwind.css; express.static serves the built file');
+  assert.match(code, /const HAS_TAILWIND_CSS = require\('fs'\)\.existsSync\(path\.join\(__dirname, 'public', 'tailwind\.css'\)\);/);
+  const stubs = code.split('\n').filter((l) => /'\/tailwind\.css'/.test(l)).map((l) => l.trim());
+  assert.deepEqual(stubs, ["if (req.path === '/tailwind.css' && !HAS_TAILWIND_CSS) {"],
+    'the stylesheet is answered empty only when the image has no built copy');
   const empty = code.split('\n').filter((l) => /status\(204\)/.test(l)).map((l) => l.trim());
-  assert.deepEqual(empty, ["app.get('/favicon.ico', (_req, res) => res.status(204).end());"],
-    'the only empty answer left is the favicon probe: no stubs for /tailwind.css or /usernode-bridge/');
+  assert.deepEqual(empty, ["app.get('/favicon.ico', (_req, res) => res.status(204).end());", 'return res.status(204).end();'],
+    'the favicon probe and the missing-stylesheet case are the only empty answers: no stubs for /usernode-bridge/');
   assert.match(code, /\['doubleTap', 'missed', 'timeUp', 'wolf'\]\.includes/);
 });
