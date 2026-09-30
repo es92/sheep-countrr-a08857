@@ -182,3 +182,19 @@ cannot wander in. See `README.md` for the full feature description.
   platform-hosted asset like the bridge/native-kit/Tailwind runtime —
   it's installed into the image and served from `/vendor/three` via
   Express static, not vendored into git.
+- **`/tailwind.css` is this app's own stylesheet, not a platform file.**
+  This app does not use the platform's Tailwind runtime
+  (`/usernode-tailwind/v1/tailwind.js`): `npm run build` compiles
+  `public/tailwind.css` from `tailwind.config.js`, the Dockerfile's first
+  stage runs that build for every image, and `express.static` serves the
+  result. It is gitignored, so a plain `node server.js` without a build has
+  no stylesheet and the layout collapses. That is the missing build, not a
+  bug: run `npm run build`. Never answer `/tailwind.css` (or any
+  `/usernode-*` path) from `server.js` with an empty response to quiet a
+  console error; a 204 there once shipped to production and left every
+  screen without its layout.
+- **The 3D frame loop runs on the round's clock** (`elapsedSeconds()` in
+  `scene.js`), which `frame()` must advance every frame. `setRoundClock`
+  only re-bases it for a resumed board. Movement, blinking and the counted
+  number's pop-in all read it, so a clock that stops moving freezes the
+  game while every static check still passes.
